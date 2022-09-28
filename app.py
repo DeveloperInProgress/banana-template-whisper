@@ -3,31 +3,63 @@ import whisper
 import os
 import base64
 from io import BytesIO
+from pytube import YouTube
+from urllib.parse import urlparse, parse_qs
 
 # Init is ran on server startup
 # Load your model to GPU as a global variable here using the variable name "model"
 def init():
     global model
     
-    model = whisper.load_model("base")
+    model = whisper.load_model("small")
 
 # Inference is ran for every server call
 # Reference your preloaded global model variable here.
-def inference(model_inputs:dict) -> dict:
+
+def video_id(url):
+    """
+    Examples:
+    - http://youtu.be/SA2iWivDJiE
+    - http://www.youtube.com/watch?v=_oPAwA_Udwc&feature=feedu
+    - http://www.youtube.com/embed/SA2iWivDJiE
+    - http://www.youtube.com/v/SA2iWivDJiE?version=3&amp;hl=en_US
+    """
+    query = urlparse(url)
+    if query.hostname == 'youtu.be':
+        return query.path[1:]
+    if query.hostname in ('www.youtube.com', 'youtube.com'):
+        if query.path == '/watch':
+            p = parse_qs(query.query)
+            return p['v'][0]
+        if query.path[:7] == '/embed/':
+            return query.path.split('/')[2]
+        if query.path[:3] == '/v/':
+            return query.path.split('/')[2]
+        # fail?
+    return None
+
+def get_mp3_from_yt(url):
+    destination = video_id(url)
+    if(os.path.exists(destination+'.mp3')):
+        return destination+'.mp3'
+    yt = YouTube(url)
+    audio = yt.streams.filter(only_audio=True).first()
+
+    out_file = audio.download(output_path=destination)
+
+    base, ext = os.path.splitext(out_file)
+    new_file = base + '.mp3'
+    os.rename(out_file, new_file)
+    return new_file
+
+def inference(url: str) -> dict:
+
     global model
 
-    # Parse out your arguments
-    mp3BytesString = model_inputs.get('mp3BytesString', None)
-    if mp3BytesString == None:
-        return {'message': "No input provided"}
-    
-    mp3Bytes = BytesIO(base64.b64decode(mp3BytesString.encode("ISO-8859-1")))
-    with open('input.mp3','wb') as file:
-        file.write(mp3Bytes.getbuffer())
-    
+    audio = get_mp3_from_yt(url)
+
     # Run the model
-    result = model.transcribe("input.mp3")
-    output = {"text":result["text"]}
-    os.remove("input.mp3")
+    result = model.transcribe(audio)
+
     # Return the results as a dictionary
-    return output
+    return result
